@@ -1,7 +1,7 @@
 # tests/test_config.py
 import pytest
 from pathlib import Path
-from data_ai.config import Config, load_config, Settings, Category
+from data_ai.config import Config, load_config, Settings, Category, create_default_config
 
 
 def test_load_config_from_yaml(tmp_config: Path):
@@ -28,3 +28,13 @@ def test_config_validation_missing_categories(tmp_path: Path):
 
     with pytest.raises(ValueError):
         load_config(config_path)
+
+
+def test_create_default_config(tmp_path: Path):
+    config_path = tmp_path / "config.yaml"
+    create_default_config(config_path)
+
+    assert config_path.exists()
+    config = load_config(config_path)
+    assert "Documents" in config.categories
+    assert "Images" in config.categories

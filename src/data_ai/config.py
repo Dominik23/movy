@@ -1,9 +1,8 @@
 # src/data_ai/config.py
 from pathlib import Path
-from typing import Optional
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 
 class Settings(BaseModel):
@@ -21,13 +20,6 @@ class Category(BaseModel):
 class Config(BaseModel):
     settings: Settings = Field(default_factory=Settings)
     categories: dict[str, Category] = Field(min_length=1)
-
-    @field_validator("categories")
-    @classmethod
-    def validate_categories(cls, v: dict[str, Category]) -> dict[str, Category]:
-        if not v:
-            raise ValueError("At least one category must be defined")
-        return v
 
 
 def load_config(config_path: Path) -> Config:

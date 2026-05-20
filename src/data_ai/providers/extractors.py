@@ -7,6 +7,9 @@ from docx import Document
 
 
 def extract_txt(file_path: Path) -> Optional[str]:
+    if not file_path.exists():
+        return None
+
     try:
         return file_path.read_text(encoding="utf-8")
     except Exception:
@@ -50,7 +53,6 @@ def extract_text(file_path: Path) -> Optional[str]:
         ".md": extract_txt,
         ".pdf": extract_pdf,
         ".docx": extract_docx,
-        ".doc": extract_docx,
     }
 
     extractor = extractors.get(suffix)

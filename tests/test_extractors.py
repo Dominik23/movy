@@ -37,3 +37,11 @@ def test_extract_pdf_returns_none_when_no_text(tmp_path: Path):
 def test_extract_docx_returns_none_when_no_text(tmp_path: Path):
     result = extract_docx(tmp_path / "nonexistent.docx")
     assert result is None
+
+
+from data_ai.providers.tesseract import extract_ocr
+
+
+def test_extract_ocr_returns_none_for_nonexistent(tmp_path: Path):
+    result = extract_ocr(tmp_path / "nonexistent.png")
+    assert result is None

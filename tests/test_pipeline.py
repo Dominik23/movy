@@ -126,3 +126,32 @@ def test_execute_stage_handles_duplicate_filename(tmp_path: Path):
     # New file has timestamp suffix
     files = list(target_dir.glob("doc_*.txt"))
     assert len(files) == 1
+
+
+def test_pipeline_process_file(tmp_path: Path, tmp_config: Path):
+    from data_ai.pipeline import process_file
+    from data_ai.config import load_config
+
+    # Create test file
+    source = tmp_path / "inbox" / "test_document.txt"
+    source.parent.mkdir()
+    source.write_text("This is a test example document")
+
+    config = load_config(tmp_config)
+    target_base = tmp_path / "sorted"
+
+    with patch("data_ai.pipeline.embed_stage") as mock_embed:
+        with patch("data_ai.pipeline.build_category_embeddings") as mock_build:
+            # File embedding
+            mock_embed.return_value = [1.0, 0.0, 0.0]
+
+            # Category embedding matches "TestCategory"
+            from data_ai.pipeline.match import CategoryEmbedding
+            mock_build.return_value = [
+                CategoryEmbedding(name="TestCategory", vector=[1.0, 0.0, 0.0])
+            ]
+
+            result = process_file(source, config, target_base)
+
+    assert result is True
+    assert (target_base / "TestCategory" / "test_document.txt").exists()

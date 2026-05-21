@@ -1,13 +1,16 @@
 # src/data_ai/cli.py
 import json
+import time
 from pathlib import Path
 from typing import Optional
 
 import typer
 from rich.console import Console
 from rich.table import Table
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler, FileCreatedEvent
 
-from data_ai.config import load_config, get_default_config_path, create_default_config
+from data_ai.config import Config, load_config, get_default_config_path, create_default_config
 
 app = typer.Typer(
     name="data-ai",
@@ -243,6 +246,79 @@ def apply() -> None:
     SCAN_RESULT_FILE.unlink(missing_ok=True)
 
     console.print(f"\n[bold]Done:[/bold] {success} sorted, {failed} skipped/failed")
+
+
+class SortHandler(FileSystemEventHandler):
+    def __init__(self, config: Config, target_base: Path):
+        self.config = config
+        self.target_base = target_base
+        self._processing = set()
+
+    def on_created(self, event: FileCreatedEvent) -> None:
+        if event.is_directory:
+            return
+
+        from data_ai.pipeline import process_file
+
+        file_path = Path(event.src_path)
+
+        # Avoid processing the same file twice
+        if file_path in self._processing:
+            return
+
+        self._processing.add(file_path)
+
+        # Wait a moment for file to be fully written
+        time.sleep(0.5)
+
+        try:
+            console.print(f"\n[bold]New file:[/bold] {file_path.name}")
+            process_file(file_path, self.config, self.target_base)
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+        finally:
+            self._processing.discard(file_path)
+
+
+@app.command()
+def watch(
+    inbox: Optional[Path] = typer.Argument(
+        None, help="Directory to watch (uses config inbox if not specified)"
+    ),
+    config_path: Optional[Path] = typer.Option(
+        None, "--config", "-c", help="Config file path"
+    ),
+    target: Optional[Path] = typer.Option(
+        None, "--target", "-t", help="Target base directory"
+    ),
+) -> None:
+    """Watch a directory and sort new files automatically."""
+    cfg = get_config(config_path)
+
+    source_dir = inbox or Path(cfg.settings.inbox)
+    if not source_dir.exists():
+        console.print(f"[red]Inbox not found: {source_dir}[/red]")
+        raise typer.Exit(1)
+
+    target_base = target or source_dir.parent
+
+    console.print(f"[bold]Watching:[/bold] {source_dir}")
+    console.print(f"[bold]Target:[/bold] {target_base}")
+    console.print("[dim]Press Ctrl+C to stop[/dim]\n")
+
+    handler = SortHandler(cfg, target_base)
+    observer = Observer()
+    observer.schedule(handler, str(source_dir), recursive=False)
+    observer.start()
+
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        observer.stop()
+        console.print("\n[yellow]Stopped watching[/yellow]")
+
+    observer.join()
 
 
 if __name__ == "__main__":

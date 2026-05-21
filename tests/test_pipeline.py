@@ -84,3 +84,45 @@ def test_match_stage_returns_all_matches_sorted():
     assert len(result.all_matches) == 2
     # Both should have similar scores
     assert result.all_matches[0][1] == pytest.approx(result.all_matches[1][1], abs=0.01)
+
+
+def test_execute_stage_moves_file(tmp_path: Path):
+    from data_ai.pipeline.execute import execute_move
+
+    # Create source file
+    source = tmp_path / "inbox" / "doc.txt"
+    source.parent.mkdir()
+    source.write_text("content")
+
+    # Create target dir
+    target_dir = tmp_path / "sorted" / "Category"
+
+    result = execute_move(source, target_dir)
+
+    assert result is True
+    assert not source.exists()
+    assert (target_dir / "doc.txt").exists()
+
+
+def test_execute_stage_handles_duplicate_filename(tmp_path: Path):
+    from data_ai.pipeline.execute import execute_move
+
+    # Create source file
+    source = tmp_path / "inbox" / "doc.txt"
+    source.parent.mkdir()
+    source.write_text("new content")
+
+    # Create target with existing file
+    target_dir = tmp_path / "sorted" / "Category"
+    target_dir.mkdir(parents=True)
+    (target_dir / "doc.txt").write_text("existing")
+
+    result = execute_move(source, target_dir)
+
+    assert result is True
+    assert not source.exists()
+    # Original still exists
+    assert (target_dir / "doc.txt").exists()
+    # New file has timestamp suffix
+    files = list(target_dir.glob("doc_*.txt"))
+    assert len(files) == 1

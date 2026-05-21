@@ -321,5 +321,73 @@ def watch(
     observer.join()
 
 
+@app.command("test")
+def test_file(
+    file_path: Path = typer.Argument(..., help="File to test"),
+    config_path: Optional[Path] = typer.Option(
+        None, "--config", "-c", help="Config file path"
+    ),
+) -> None:
+    """Test classification of a single file without moving it."""
+    from data_ai.pipeline import build_category_embeddings
+    from data_ai.pipeline.extract import extract_stage
+    from data_ai.pipeline.embed import embed_stage
+    from data_ai.pipeline.match import match_stage
+
+    if not file_path.exists():
+        console.print(f"[red]File not found: {file_path}[/red]")
+        raise typer.Exit(1)
+
+    cfg = get_config(config_path)
+
+    console.print(f"[bold]Testing:[/bold] {file_path.name}\n")
+
+    # Extract
+    console.print("[dim]Extracting text...[/dim]")
+    text = extract_stage(file_path, vision_model=cfg.settings.vision_model)
+    if not text:
+        console.print("[red]Could not extract text from file[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]Extracted {len(text)} characters[/green]")
+    console.print(f"[dim]Preview: {text[:100]}...[/dim]\n")
+
+    # Embed
+    console.print("[dim]Creating embedding...[/dim]")
+    file_vector = embed_stage(text, model=cfg.settings.ollama_model)
+    console.print(f"[green]Created {len(file_vector)}-dim vector[/green]\n")
+
+    # Match
+    console.print("[dim]Matching against categories...[/dim]")
+    category_embeddings = build_category_embeddings(cfg, cfg.settings.ollama_model)
+
+    # Get all scores
+    from data_ai.utils.similarity import cosine_similarity
+
+    scores = []
+    for cat_emb in category_embeddings:
+        score = cosine_similarity(file_vector, cat_emb.vector)
+        scores.append((cat_emb.name, score))
+
+    scores.sort(key=lambda x: x[1], reverse=True)
+
+    console.print("\n[bold]Results:[/bold]")
+    for category, score in scores:
+        threshold = cfg.settings.similarity_threshold
+        if score >= threshold:
+            console.print(f"  [green]✓ {category}: {score:.1%}[/green]")
+        else:
+            console.print(f"  [dim]✗ {category}: {score:.1%}[/dim]")
+
+    best = scores[0]
+    threshold = cfg.settings.similarity_threshold
+
+    console.print()
+    if best[1] >= threshold:
+        console.print(f"[bold green]Would sort to: {best[0]}[/bold green]")
+    else:
+        console.print(f"[bold yellow]Would prompt user (best: {best[0]} at {best[1]:.1%})[/bold yellow]")
+
+
 if __name__ == "__main__":
     app()

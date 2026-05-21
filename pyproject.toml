@@ -12,6 +12,7 @@ dependencies = [
     "ollama>=0.1.0",
     "pdfplumber>=0.9.0",
     "python-docx>=0.8.0",
+    "python-pptx>=0.6.0",
     "pytesseract>=0.3.0",
     "Pillow>=10.0.0",
     "numpy>=1.24.0",

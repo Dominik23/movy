@@ -4,6 +4,7 @@ from typing import Optional
 
 import pdfplumber
 from docx import Document
+from pptx import Presentation
 
 
 def extract_txt(file_path: Path) -> Optional[str]:
@@ -45,6 +46,24 @@ def extract_docx(file_path: Path) -> Optional[str]:
         return None
 
 
+def extract_pptx(file_path: Path) -> Optional[str]:
+    if not file_path.exists():
+        return None
+
+    try:
+        prs = Presentation(file_path)
+        text_parts = []
+
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if hasattr(shape, "text") and shape.text.strip():
+                    text_parts.append(shape.text)
+
+        return "\n".join(text_parts) if text_parts else None
+    except Exception:
+        return None
+
+
 def extract_text(file_path: Path) -> Optional[str]:
     suffix = file_path.suffix.lower()
 
@@ -53,6 +72,7 @@ def extract_text(file_path: Path) -> Optional[str]:
         ".md": extract_txt,
         ".pdf": extract_pdf,
         ".docx": extract_docx,
+        ".pptx": extract_pptx,
     }
 
     extractor = extractors.get(suffix)

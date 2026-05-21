@@ -23,3 +23,15 @@ def test_extract_stage_unsupported_falls_back_to_none(tmp_path: Path):
         with patch("data_ai.pipeline.extract.describe_image", return_value=None):
             result = extract_stage(unknown)
             assert result is None
+
+
+def test_embed_stage_calls_ollama():
+    from data_ai.pipeline.embed import embed_stage
+
+    with patch("data_ai.pipeline.embed.get_embedding") as mock_embed:
+        mock_embed.return_value = [0.1, 0.2, 0.3]
+
+        result = embed_stage("test text", model="nomic-embed-text")
+
+        assert result == [0.1, 0.2, 0.3]
+        mock_embed.assert_called_once_with("test text", model="nomic-embed-text")

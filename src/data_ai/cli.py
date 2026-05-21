@@ -86,5 +86,56 @@ def categories(
     console.print(table)
 
 
+@app.command()
+def sort(
+    inbox: Optional[Path] = typer.Argument(
+        None, help="Directory to sort (uses config inbox if not specified)"
+    ),
+    config_path: Optional[Path] = typer.Option(
+        None, "--config", "-c", help="Config file path"
+    ),
+    target: Optional[Path] = typer.Option(
+        None, "--target", "-t", help="Target base directory (default: parent of inbox)"
+    ),
+) -> None:
+    """Sort files from inbox into categories."""
+    from data_ai.pipeline import process_file
+
+    cfg = get_config(config_path)
+
+    source_dir = inbox or Path(cfg.settings.inbox)
+    if not source_dir.exists():
+        console.print(f"[red]Inbox not found: {source_dir}[/red]")
+        raise typer.Exit(1)
+
+    target_base = target or source_dir.parent
+
+    files = [f for f in source_dir.iterdir() if f.is_file()]
+
+    if not files:
+        console.print("[yellow]No files to sort[/yellow]")
+        return
+
+    console.print(f"[bold]Sorting {len(files)} files...[/bold]\n")
+
+    success = 0
+    failed = 0
+
+    for file_path in files:
+        try:
+            if process_file(file_path, cfg, target_base):
+                success += 1
+            else:
+                failed += 1
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Aborted by user[/yellow]")
+            break
+        except Exception as e:
+            console.print(f"[red]Error processing {file_path.name}: {e}[/red]")
+            failed += 1
+
+    console.print(f"\n[bold]Done:[/bold] {success} sorted, {failed} skipped/failed")
+
+
 if __name__ == "__main__":
     app()

@@ -1,4 +1,5 @@
 # src/data_ai/cli.py
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -13,6 +14,8 @@ app = typer.Typer(
     help="Intelligent file organizer using semantic similarity",
 )
 console = Console()
+
+SCAN_RESULT_FILE = Path.home() / ".cache" / "data-ai" / "last_scan.json"
 
 
 def get_config(config_path: Optional[Path]) -> "Config":
@@ -133,6 +136,111 @@ def sort(
         except Exception as e:
             console.print(f"[red]Error processing {file_path.name}: {e}[/red]")
             failed += 1
+
+    console.print(f"\n[bold]Done:[/bold] {success} sorted, {failed} skipped/failed")
+
+
+@app.command()
+def scan(
+    inbox: Optional[Path] = typer.Argument(
+        None, help="Directory to scan (uses config inbox if not specified)"
+    ),
+    config_path: Optional[Path] = typer.Option(
+        None, "--config", "-c", help="Config file path"
+    ),
+    target: Optional[Path] = typer.Option(
+        None, "--target", "-t", help="Target base directory"
+    ),
+) -> None:
+    """Scan files and show what would be sorted (dry run)."""
+    from data_ai.pipeline import process_file
+
+    cfg = get_config(config_path)
+
+    source_dir = inbox or Path(cfg.settings.inbox)
+    if not source_dir.exists():
+        console.print(f"[red]Inbox not found: {source_dir}[/red]")
+        raise typer.Exit(1)
+
+    target_base = target or source_dir.parent
+
+    files = [f for f in source_dir.iterdir() if f.is_file()]
+
+    if not files:
+        console.print("[yellow]No files to scan[/yellow]")
+        return
+
+    console.print(f"[bold]Scanning {len(files)} files...[/bold]\n")
+
+    scan_results = []
+
+    for file_path in files:
+        try:
+            process_file(file_path, cfg, target_base, dry_run=True)
+            scan_results.append({
+                "source": str(file_path),
+                "target_base": str(target_base),
+            })
+        except Exception as e:
+            console.print(f"[red]Error scanning {file_path.name}: {e}[/red]")
+
+    # Save scan results
+    SCAN_RESULT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SCAN_RESULT_FILE.write_text(json.dumps({
+        "config_path": str(config_path or get_default_config_path()),
+        "files": scan_results,
+    }))
+
+    console.print(f"\n[dim]Run [green]data-ai apply[/green] to execute[/dim]")
+
+
+@app.command()
+def apply() -> None:
+    """Execute the last scan."""
+    from data_ai.pipeline import process_file
+
+    if not SCAN_RESULT_FILE.exists():
+        console.print("[red]No scan results found. Run [green]data-ai scan[/green] first.[/red]")
+        raise typer.Exit(1)
+
+    data = json.loads(SCAN_RESULT_FILE.read_text())
+    config_path = Path(data["config_path"])
+    files = data["files"]
+
+    if not files:
+        console.print("[yellow]No files in scan results[/yellow]")
+        return
+
+    cfg = load_config(config_path)
+
+    console.print(f"[bold]Applying to {len(files)} files...[/bold]\n")
+
+    success = 0
+    failed = 0
+
+    for item in files:
+        source = Path(item["source"])
+        target_base = Path(item["target_base"])
+
+        if not source.exists():
+            console.print(f"[yellow]Skipping (not found): {source.name}[/yellow]")
+            failed += 1
+            continue
+
+        try:
+            if process_file(source, cfg, target_base):
+                success += 1
+            else:
+                failed += 1
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Aborted by user[/yellow]")
+            break
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+            failed += 1
+
+    # Clear scan results
+    SCAN_RESULT_FILE.unlink(missing_ok=True)
 
     console.print(f"\n[bold]Done:[/bold] {success} sorted, {failed} skipped/failed")
 

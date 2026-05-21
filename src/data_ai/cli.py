@@ -129,7 +129,7 @@ def sort(
 
     for file_path in files:
         try:
-            if process_file(file_path, cfg, target_base):
+            if process_file(file_path, cfg, target_base, config_path=config_path or get_default_config_path()):
                 success += 1
             else:
                 failed += 1
@@ -231,7 +231,7 @@ def apply() -> None:
             continue
 
         try:
-            if process_file(source, cfg, target_base):
+            if process_file(source, cfg, target_base, config_path=config_path):
                 success += 1
             else:
                 failed += 1
@@ -249,9 +249,10 @@ def apply() -> None:
 
 
 class SortHandler(FileSystemEventHandler):
-    def __init__(self, config: Config, target_base: Path):
+    def __init__(self, config: Config, target_base: Path, config_path: Path):
         self.config = config
         self.target_base = target_base
+        self.config_path = config_path
         self._processing = set()
 
     def on_created(self, event: FileCreatedEvent) -> None:
@@ -273,7 +274,7 @@ class SortHandler(FileSystemEventHandler):
 
         try:
             console.print(f"\n[bold]New file:[/bold] {file_path.name}")
-            process_file(file_path, self.config, self.target_base)
+            process_file(file_path, self.config, self.target_base, config_path=self.config_path)
         except Exception as e:
             console.print(f"[red]Error: {e}[/red]")
         finally:
@@ -306,7 +307,7 @@ def watch(
     console.print(f"[bold]Target:[/bold] {target_base}")
     console.print("[dim]Press Ctrl+C to stop[/dim]\n")
 
-    handler = SortHandler(cfg, target_base)
+    handler = SortHandler(cfg, target_base, config_path or get_default_config_path())
     observer = Observer()
     observer.schedule(handler, str(source_dir), recursive=False)
     observer.start()

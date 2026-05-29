@@ -22,3 +22,18 @@ def average_vectors(vectors: list[list[float]]) -> list[float]:
 
     arr = np.array(vectors)
     return arr.mean(axis=0).tolist()
+
+
+def cosine_distance(vec_a: list[float], vec_b: list[float]) -> float:
+    """Returns 1 - cosine_similarity (0 = identical, 2 = opposite)."""
+    return 1.0 - cosine_similarity(vec_a, vec_b)
+
+
+def compute_variance(vectors: list[list[float]]) -> float:
+    """Compute variance of distances from centroid."""
+    if len(vectors) < 2:
+        return 0.0
+
+    centroid = average_vectors(vectors)
+    distances = [cosine_distance(v, centroid) for v in vectors]
+    return float(np.var(distances))

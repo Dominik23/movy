@@ -155,3 +155,37 @@ def test_pipeline_process_file(tmp_path: Path, tmp_config: Path):
 
     assert result is True
     assert (target_base / "TestCategory" / "test_document.txt").exists()
+
+
+def test_scan_folder_recursive(tmp_path: Path):
+    from data_ai.pipeline.extract import scan_folder
+
+    # Create nested structure
+    (tmp_path / "sub1").mkdir()
+    (tmp_path / "sub1" / "sub2").mkdir()
+
+    (tmp_path / "file1.txt").write_text("content 1")
+    (tmp_path / "sub1" / "file2.txt").write_text("content 2")
+    (tmp_path / "sub1" / "sub2" / "file3.txt").write_text("content 3")
+
+    files, trash_log = scan_folder(tmp_path)
+
+    assert len(files) == 3
+    assert all(f.suffix == ".txt" for f in files)
+    assert len(trash_log) == 0
+
+
+def test_scan_folder_moves_unsupported_to_trash(tmp_path: Path):
+    from data_ai.pipeline.extract import scan_folder
+
+    (tmp_path / "good.txt").write_text("content")
+    (tmp_path / "bad.xyz").write_text("unsupported")
+
+    trash_dir = tmp_path / ".trash"
+    files, trash_log = scan_folder(tmp_path, trash_dir=trash_dir)
+
+    assert len(files) == 1
+    assert files[0].name == "good.txt"
+    assert (trash_dir / "bad.xyz").exists()
+    assert len(trash_log) == 1
+    assert "unsupported" in trash_log[0]["reason"].lower()

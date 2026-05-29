@@ -1,0 +1,476 @@
+# src/data_ai/cli_v2.py
+import webbrowser
+from pathlib import Path
+from typing import Optional
+from uuid import uuid4
+
+import typer
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.table import Table
+
+from data_ai.config import load_config, get_default_config_path, create_default_config
+from data_ai.storage import QdrantStore, Document, Cluster, DocumentStatus, ClusterStatus
+from data_ai.pipeline.extract import scan_folder, extract_stage
+from data_ai.pipeline.embed import embed_stage
+from data_ai.pipeline.cluster import find_optimal_k, cluster_documents, should_split, split_cluster
+from data_ai.pipeline.naming import generate_cluster_name
+from data_ai.pipeline.review import generate_review_html
+from data_ai.pipeline.execute import execute_copy, sanitize_folder_name
+from data_ai.utils.similarity import compute_variance
+
+app = typer.Typer(
+    name="data-ai",
+    help="Intelligent file organizer using vector clustering",
+)
+console = Console()
+
+
+def get_store(config_path: Optional[Path] = None) -> QdrantStore:
+    path = config_path or get_default_config_path()
+    if path.exists():
+        cfg = load_config(path)
+        return QdrantStore(url=cfg.settings.qdrant_url, prefix=cfg.settings.qdrant_collection_prefix)
+    return QdrantStore()
+
+
+@app.command()
+def init(
+    config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
+    db_url: str = typer.Option("localhost:6333", "--db-url"),
+) -> None:
+    """Initialize config and verify Qdrant connection."""
+    path = config_path or get_default_config_path()
+
+    if not path.exists():
+        create_default_config(path)
+        console.print(f"[green]Created config at: {path}[/green]")
+
+    # Test Qdrant connection
+    try:
+        store = QdrantStore(url=db_url)
+        console.print(f"[green]Connected to Qdrant at {db_url}[/green]")
+    except Exception as e:
+        console.print(f"[red]Could not connect to Qdrant: {e}[/red]")
+        console.print("Make sure Qdrant is running: docker-compose up -d")
+        raise typer.Exit(1)
+
+
+@app.command()
+def status(
+    config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
+) -> None:
+    """Show current pipeline status."""
+    store = get_store(config_path)
+
+    docs = store.get_all_documents()
+    clusters = store.get_all_clusters()
+
+    # Count by status
+    doc_status_counts: dict[str, int] = {}
+    for doc in docs:
+        status_val = doc.status.value if hasattr(doc.status, 'value') else doc.status
+        doc_status_counts[status_val] = doc_status_counts.get(status_val, 0) + 1
+
+    cluster_status_counts: dict[str, int] = {}
+    for cluster in clusters:
+        status_val = cluster.status.value if hasattr(cluster.status, 'value') else cluster.status
+        cluster_status_counts[status_val] = cluster_status_counts.get(status_val, 0) + 1
+
+    console.print("\n[bold]Documents:[/bold]")
+    table = Table()
+    table.add_column("Status")
+    table.add_column("Count", justify="right")
+
+    for status_val, count in sorted(doc_status_counts.items()):
+        table.add_row(status_val, str(count))
+    table.add_row("[bold]Total[/bold]", f"[bold]{len(docs)}[/bold]")
+
+    console.print(table)
+
+    console.print("\n[bold]Clusters:[/bold]")
+    table = Table()
+    table.add_column("Status")
+    table.add_column("Count", justify="right")
+
+    for status_val, count in sorted(cluster_status_counts.items()):
+        table.add_row(status_val, str(count))
+    table.add_row("[bold]Total[/bold]", f"[bold]{len(clusters)}[/bold]")
+
+    console.print(table)
+
+
+@app.command()
+def reset(
+    config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
+    confirm: bool = typer.Option(False, "--confirm", help="Confirm reset"),
+) -> None:
+    """Reset all data in Qdrant."""
+    if not confirm:
+        console.print("[red]This will delete all documents and clusters![/red]")
+        console.print("Run with [green]--confirm[/green] to proceed")
+        raise typer.Exit(1)
+
+    store = get_store(config_path)
+    store.reset()
+
+    console.print("[green]Database reset complete[/green]")
+
+
+@app.command()
+def scan(
+    folder: Path = typer.Argument(..., help="Folder to scan"),
+    config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
+    trash_dir: Optional[Path] = typer.Option(None, "--trash", "-t", help="Move unsupported files here"),
+) -> None:
+    """Scan folder, extract text, create embeddings, and store in Qdrant."""
+    if not folder.exists():
+        console.print(f"[red]Folder does not exist: {folder}[/red]")
+        raise typer.Exit(1)
+
+    path = config_path or get_default_config_path()
+    if path.exists():
+        cfg = load_config(path)
+    else:
+        from data_ai.config import Settings
+        cfg = type('Config', (), {'settings': Settings()})()
+
+    store = get_store(config_path)
+
+    # Step 1: Scan folder
+    console.print(f"[blue]Scanning {folder}...[/blue]")
+    supported_files, trash_log = scan_folder(folder, trash_dir)
+
+    if trash_log:
+        console.print(f"[yellow]Moved {len(trash_log)} unsupported files to trash[/yellow]")
+
+    if not supported_files:
+        console.print("[yellow]No supported files found[/yellow]")
+        return
+
+    console.print(f"[green]Found {len(supported_files)} supported files[/green]")
+
+    # Step 2: Extract text and create embeddings
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Processing files...", total=len(supported_files))
+
+        for file_path in supported_files:
+            progress.update(task, description=f"Processing {file_path.name}...")
+
+            # Extract text
+            text = extract_stage(file_path, vision_model=cfg.settings.vision_model)
+
+            if not text:
+                console.print(f"[yellow]Could not extract text from {file_path.name}[/yellow]")
+                progress.advance(task)
+                continue
+
+            # Truncate summary if needed
+            summary = text[:cfg.settings.summary_length] if len(text) > cfg.settings.summary_length else text
+
+            # Create embedding
+            try:
+                vector = embed_stage(text, model=cfg.settings.ollama_model)
+            except Exception as e:
+                console.print(f"[red]Embedding failed for {file_path.name}: {e}[/red]")
+                progress.advance(task)
+                continue
+
+            # Create document
+            doc = Document(
+                id=store.generate_id(),
+                source_path=str(file_path.absolute()),
+                file_type=file_path.suffix.lower(),
+                file_size=file_path.stat().st_size,
+                summary=summary,
+                status=DocumentStatus.EMBEDDED,
+                vector=vector,
+            )
+
+            store.upsert_document(doc)
+            progress.advance(task)
+
+    # Show final count
+    docs = store.get_documents_by_status(DocumentStatus.EMBEDDED)
+    console.print(f"[green]Processed {len(docs)} documents, ready for clustering[/green]")
+
+
+@app.command()
+def cluster(
+    config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
+    min_k: Optional[int] = typer.Option(None, "--min-k", help="Minimum number of clusters"),
+    max_k: Optional[int] = typer.Option(None, "--max-k", help="Maximum number of clusters"),
+    recluster: bool = typer.Option(False, "--recluster", help="Delete existing clusters and recluster"),
+) -> None:
+    """Run clustering on embedded documents and generate names."""
+    path = config_path or get_default_config_path()
+    if path.exists():
+        cfg = load_config(path)
+    else:
+        from data_ai.config import Settings
+        cfg = type('Config', (), {'settings': Settings()})()
+
+    store = get_store(config_path)
+
+    # Delete existing clusters if reclustering
+    if recluster:
+        console.print("[yellow]Deleting existing clusters...[/yellow]")
+        store.delete_all_clusters()
+
+    # Get embedded documents
+    docs = store.get_documents_by_status(DocumentStatus.EMBEDDED)
+
+    if not docs:
+        console.print("[yellow]No embedded documents found. Run 'scan' first.[/yellow]")
+        return
+
+    console.print(f"[blue]Clustering {len(docs)} documents...[/blue]")
+
+    # Extract vectors
+    vectors = [doc.vector for doc in docs if doc.vector]
+    doc_ids = [doc.id for doc in docs if doc.vector]
+
+    if len(vectors) < 2:
+        console.print("[yellow]Need at least 2 documents for clustering[/yellow]")
+        return
+
+    # Find optimal k
+    min_clusters = min_k or cfg.settings.min_clusters
+    max_clusters = max_k or cfg.settings.max_clusters
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Finding optimal cluster count...", total=None)
+
+        k = find_optimal_k(vectors, min_k=min_clusters, max_k=max_clusters)
+        progress.update(task, description=f"Clustering into {k} clusters...")
+
+        # Run clustering
+        assignments, centroids = cluster_documents(vectors, k)
+
+        progress.update(task, description="Creating cluster records...")
+
+        # Create clusters and assign documents
+        cluster_map: dict[int, str] = {}  # cluster_idx -> cluster_id
+        cluster_docs: dict[str, list[Document]] = {}  # cluster_id -> docs
+
+        for cluster_idx in range(k):
+            cluster_id = store.generate_id()
+            cluster_map[cluster_idx] = cluster_id
+            cluster_docs[cluster_id] = []
+
+        # Assign documents to clusters
+        for doc_id, cluster_idx in zip(doc_ids, assignments):
+            cluster_id = cluster_map[cluster_idx]
+            store.update_document_cluster(doc_id, cluster_id)
+
+            # Find the document
+            for doc in docs:
+                if doc.id == doc_id:
+                    cluster_docs[cluster_id].append(doc)
+                    break
+
+        progress.update(task, description="Generating cluster names...")
+
+        # Create cluster records with names
+        for cluster_idx, cluster_id in cluster_map.items():
+            docs_in_cluster = cluster_docs[cluster_id]
+            summaries = [doc.summary for doc in docs_in_cluster]
+            vectors_in_cluster = [doc.vector for doc in docs_in_cluster if doc.vector]
+
+            # Generate name
+            name = generate_cluster_name(summaries, model=cfg.settings.chat_model)
+
+            # Calculate variance
+            variance = compute_variance(vectors_in_cluster) if vectors_in_cluster else 0.0
+
+            cluster_record = Cluster(
+                id=cluster_id,
+                name=name,
+                doc_count=len(docs_in_cluster),
+                variance=variance,
+                centroid=centroids[cluster_idx],
+                status=ClusterStatus.PROPOSED,
+            )
+
+            store.upsert_cluster(cluster_record)
+
+    # Show results
+    clusters = store.get_all_clusters()
+    console.print(f"\n[green]Created {len(clusters)} clusters:[/green]\n")
+
+    table = Table()
+    table.add_column("Name")
+    table.add_column("Documents", justify="right")
+    table.add_column("Variance", justify="right")
+
+    for c in sorted(clusters, key=lambda x: x.doc_count, reverse=True):
+        table.add_row(c.name, str(c.doc_count), f"{c.variance:.2f}")
+
+    console.print(table)
+
+
+@app.command()
+def review(
+    config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output HTML file path"),
+    open_browser: bool = typer.Option(True, "--open/--no-open", help="Open in browser"),
+) -> None:
+    """Generate and optionally open HTML review."""
+    path = config_path or get_default_config_path()
+    if path.exists():
+        cfg = load_config(path)
+    else:
+        from data_ai.config import Settings
+        cfg = type('Config', (), {'settings': Settings()})()
+
+    store = get_store(config_path)
+
+    clusters = store.get_all_clusters()
+
+    if not clusters:
+        console.print("[yellow]No clusters found. Run 'cluster' first.[/yellow]")
+        return
+
+    # Build cluster_docs map
+    cluster_docs: dict[str, list[str]] = {}
+    for cluster in clusters:
+        docs = store.get_documents_by_cluster(cluster.id)
+        cluster_docs[cluster.id] = [Path(doc.source_path).name for doc in docs]
+
+    # Generate HTML
+    output_path = output or Path(cfg.settings.review_html)
+
+    console.print(f"[blue]Generating review at {output_path}...[/blue]")
+    generate_review_html(clusters, cluster_docs, output_path)
+
+    console.print(f"[green]Review generated: {output_path}[/green]")
+
+    if open_browser:
+        webbrowser.open(f"file://{output_path.absolute()}")
+
+
+@app.command()
+def apply(
+    target: Path = typer.Argument(..., help="Target directory for organized files"),
+    config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
+    log_file: Optional[Path] = typer.Option(None, "--log", "-l", help="Log file for copy operations"),
+    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Show what would be copied without copying"),
+) -> None:
+    """Copy files to target directory based on cluster assignments."""
+    path = config_path or get_default_config_path()
+    if path.exists():
+        cfg = load_config(path)
+    else:
+        from data_ai.config import Settings
+        cfg = type('Config', (), {'settings': Settings()})()
+
+    store = get_store(config_path)
+
+    clusters = store.get_all_clusters()
+    approved_clusters = [c for c in clusters if c.status == ClusterStatus.APPROVED]
+
+    if not approved_clusters:
+        # If no approved clusters, use all proposed ones
+        approved_clusters = [c for c in clusters if c.status == ClusterStatus.PROPOSED]
+        if not approved_clusters:
+            console.print("[yellow]No clusters found. Run 'cluster' first.[/yellow]")
+            return
+        console.print("[yellow]No approved clusters. Using proposed clusters.[/yellow]")
+
+    console.print(f"[blue]Applying {len(approved_clusters)} clusters to {target}...[/blue]")
+
+    log_path = log_file or (Path(cfg.settings.log_file) if hasattr(cfg.settings, 'log_file') else None)
+
+    copied_count = 0
+    failed_count = 0
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Copying files...", total=len(approved_clusters))
+
+        for cluster in approved_clusters:
+            progress.update(task, description=f"Processing {cluster.name}...")
+
+            docs = store.get_documents_by_cluster(cluster.id)
+            folder_name = sanitize_folder_name(cluster.name)
+            target_dir = target / folder_name
+
+            for doc in docs:
+                source = Path(doc.source_path)
+
+                if not source.exists():
+                    console.print(f"[yellow]Source not found: {source}[/yellow]")
+                    failed_count += 1
+                    continue
+
+                if dry_run:
+                    console.print(f"[dim]Would copy: {source.name} -> {target_dir}[/dim]")
+                    copied_count += 1
+                else:
+                    result = execute_copy(source, target_dir, log_path)
+                    if result:
+                        copied_count += 1
+                        store.update_document_status(doc.id, DocumentStatus.APPLIED)
+                    else:
+                        failed_count += 1
+
+            # Update cluster status
+            if not dry_run:
+                store.update_cluster_status(cluster.id, ClusterStatus.APPLIED)
+
+            progress.advance(task)
+
+    if dry_run:
+        console.print(f"\n[blue]Dry run: would copy {copied_count} files[/blue]")
+    else:
+        console.print(f"\n[green]Copied {copied_count} files, {failed_count} failed[/green]")
+
+
+@app.command()
+def run(
+    folder: Path = typer.Argument(..., help="Folder to process"),
+    target: Path = typer.Argument(..., help="Target directory for organized files"),
+    config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
+    skip_review: bool = typer.Option(False, "--skip-review", help="Skip HTML review generation"),
+    auto_apply: bool = typer.Option(False, "--auto-apply", help="Apply without manual review"),
+) -> None:
+    """Full pipeline: scan, cluster, review, and apply."""
+    from typer import Context
+
+    console.print("[bold blue]Starting full pipeline...[/bold blue]\n")
+
+    # Step 1: Scan
+    console.print("[bold]Step 1: Scanning and extracting...[/bold]")
+    scan(folder=folder, config_path=config_path)
+
+    # Step 2: Cluster
+    console.print("\n[bold]Step 2: Clustering...[/bold]")
+    cluster(config_path=config_path)
+
+    # Step 3: Review
+    if not skip_review:
+        console.print("\n[bold]Step 3: Generating review...[/bold]")
+        review(config_path=config_path, open_browser=not auto_apply)
+
+    # Step 4: Apply
+    if auto_apply:
+        console.print("\n[bold]Step 4: Applying...[/bold]")
+        apply(target=target, config_path=config_path)
+    else:
+        console.print("\n[yellow]Review the clusters in the browser, then run:[/yellow]")
+        console.print(f"  data-ai apply {target}")
+
+
+if __name__ == "__main__":
+    app()

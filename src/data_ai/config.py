@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class Settings(BaseModel):
+    # Existing
     ollama_model: str = "nomic-embed-text"
     vision_model: str = "llava"
     chat_model: str = "llama3.2"
@@ -13,6 +14,25 @@ class Settings(BaseModel):
     learning_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
     auto_learn: bool = True
     inbox: str = "./inbox"
+
+    # New: Qdrant
+    qdrant_url: str = "localhost:6333"
+    qdrant_collection_prefix: str = "data_ai"
+
+    # New: Clustering
+    min_clusters: int = Field(default=2, ge=2)
+    max_clusters: int = Field(default=20, ge=2)
+    variance_threshold: float = Field(default=0.4, ge=0.0, le=1.0)
+    min_cluster_size: int = Field(default=3, ge=1)
+
+    # New: Processing
+    batch_size: int = Field(default=100, ge=1)
+    summary_length: int = Field(default=2000, ge=100)
+
+    # New: Output
+    trash_folder: str = ".trash"
+    log_file: str = "data-ai.log"
+    review_html: str = "/tmp/data-ai-review.html"
 
 
 class Category(BaseModel):

@@ -38,3 +38,24 @@ def test_create_default_config(tmp_path: Path):
     config = load_config(config_path)
     assert "Documents" in config.categories
     assert "Images" in config.categories
+
+
+def test_config_has_qdrant_settings(tmp_path: Path):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("""
+settings:
+  qdrant_url: "localhost:6333"
+  min_clusters: 2
+  max_clusters: 20
+  variance_threshold: 0.4
+categories:
+  Test:
+    keywords: ["test"]
+""")
+    from data_ai.config import load_config
+    cfg = load_config(config_file)
+
+    assert cfg.settings.qdrant_url == "localhost:6333"
+    assert cfg.settings.min_clusters == 2
+    assert cfg.settings.max_clusters == 20
+    assert cfg.settings.variance_threshold == 0.4

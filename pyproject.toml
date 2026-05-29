@@ -30,7 +30,8 @@ dev = [
 ]
 
 [project.scripts]
-data-ai = "data_ai.cli:app"
+data-ai = "data_ai.cli_v2:app"
+data-ai-legacy = "data_ai.cli:app"
 
 [build-system]
 requires = ["hatchling"]

@@ -189,3 +189,37 @@ def test_scan_folder_moves_unsupported_to_trash(tmp_path: Path):
     assert (trash_dir / "bad.xyz").exists()
     assert len(trash_log) == 1
     assert "unsupported" in trash_log[0]["reason"].lower()
+
+
+def test_execute_copy_preserves_original(tmp_path: Path):
+    from data_ai.pipeline.execute import execute_copy
+
+    source = tmp_path / "inbox" / "doc.txt"
+    source.parent.mkdir()
+    source.write_text("content")
+
+    target_dir = tmp_path / "sorted" / "Category"
+
+    result = execute_copy(source, target_dir)
+
+    assert result is not None
+    assert source.exists()  # Original preserved
+    assert (target_dir / "doc.txt").exists()
+
+
+def test_execute_copy_writes_log(tmp_path: Path):
+    from data_ai.pipeline.execute import execute_copy
+
+    source = tmp_path / "doc.txt"
+    source.write_text("content")
+
+    target_dir = tmp_path / "sorted"
+    log_file = tmp_path / "copy.log"
+
+    execute_copy(source, target_dir, log_file=log_file)
+
+    assert log_file.exists()
+    import json
+    log_entry = json.loads(log_file.read_text().strip().split("\n")[-1])
+    assert log_entry["source"] == str(source)
+    assert "target" in log_entry

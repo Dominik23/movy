@@ -6,7 +6,9 @@ from uuid import uuid4
 
 import typer
 from rich.console import Console
+from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.prompt import Prompt, Confirm
 from rich.table import Table
 
 from data_ai.config import load_config, get_default_config_path, create_default_config
@@ -317,11 +319,127 @@ def cluster(
     console.print(table)
 
 
+def _interactive_review(store: "QdrantStore") -> None:
+    """Interactive TUI for reviewing and editing clusters."""
+    while True:
+        console.clear()
+        clusters = store.get_all_clusters()
+        clusters = sorted(clusters, key=lambda c: c.doc_count, reverse=True)
+
+        # Display cluster table
+        table = Table(title="Cluster Review")
+        table.add_column("#", justify="right", style="cyan")
+        table.add_column("Name")
+        table.add_column("Docs", justify="right")
+        table.add_column("Status", justify="center")
+
+        for idx, cluster in enumerate(clusters, 1):
+            status_style = "green" if cluster.status == ClusterStatus.APPROVED else "yellow"
+            table.add_row(
+                str(idx),
+                cluster.name,
+                str(cluster.doc_count),
+                f"[{status_style}]{cluster.status.value}[/{status_style}]",
+            )
+
+        console.print(table)
+        console.print()
+        console.print("[dim]Enter number to edit, [a]pprove all, [q]uit and save[/dim]")
+
+        choice = Prompt.ask("Choice").strip().lower()
+
+        if choice == "q":
+            console.print("[green]Changes saved.[/green]")
+            break
+        elif choice == "a":
+            for cluster in clusters:
+                if cluster.status == ClusterStatus.PROPOSED:
+                    store.update_cluster_status(cluster.id, ClusterStatus.APPROVED)
+            console.print("[green]All clusters approved.[/green]")
+            continue
+
+        # Check if it's a number
+        try:
+            idx = int(choice)
+            if 1 <= idx <= len(clusters):
+                _edit_cluster(store, clusters[idx - 1])
+            else:
+                console.print("[red]Invalid number[/red]")
+                Prompt.ask("Press Enter to continue")
+        except ValueError:
+            console.print("[red]Invalid input[/red]")
+            Prompt.ask("Press Enter to continue")
+
+
+def _edit_cluster(store: "QdrantStore", cluster: "Cluster") -> None:
+    """Show cluster details and allow editing."""
+    while True:
+        console.clear()
+
+        # Get sample documents
+        docs = store.get_documents_by_cluster(cluster.id)
+        sample_files = [Path(doc.source_path).name for doc in docs[:10]]
+
+        # Build content
+        content = "[bold]Sample files:[/bold]\n"
+        for fname in sample_files:
+            content += f"  - {fname}\n"
+        if len(docs) > 10:
+            content += f"  [dim]... and {len(docs) - 10} more[/dim]\n"
+
+        status_style = "green" if cluster.status == ClusterStatus.APPROVED else "yellow"
+        content += f"\n[bold]Status:[/bold] [{status_style}]{cluster.status.value}[/{status_style}]"
+
+        panel = Panel(
+            content,
+            title=f"Cluster: {cluster.name} ({cluster.doc_count} documents)",
+            border_style="blue",
+        )
+        console.print(panel)
+        console.print()
+        console.print("[dim][a]pprove  [r]ename  [s]kip  [b]ack[/dim]")
+
+        choice = Prompt.ask("Action").strip().lower()
+
+        if choice == "b":
+            break
+        elif choice == "a":
+            store.update_cluster_status(cluster.id, ClusterStatus.APPROVED)
+            # Refresh cluster object
+            clusters = store.get_all_clusters()
+            for c in clusters:
+                if c.id == cluster.id:
+                    cluster = c
+                    break
+            console.print("[green]Cluster approved.[/green]")
+        elif choice == "r":
+            new_name = Prompt.ask("New name", default=cluster.name)
+            if new_name and new_name != cluster.name:
+                store.update_cluster_name(cluster.id, new_name)
+                # Refresh cluster object
+                clusters = store.get_all_clusters()
+                for c in clusters:
+                    if c.id == cluster.id:
+                        cluster = c
+                        break
+                console.print(f"[green]Renamed to: {new_name}[/green]")
+        elif choice == "s":
+            # Skip means set back to proposed (won't be applied if there are approved clusters)
+            store.update_cluster_status(cluster.id, ClusterStatus.PROPOSED)
+            clusters = store.get_all_clusters()
+            for c in clusters:
+                if c.id == cluster.id:
+                    cluster = c
+                    break
+            console.print("[yellow]Cluster marked as skipped (proposed).[/yellow]")
+
+
 @app.command()
 def review(
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output HTML file path"),
     open_browser: bool = typer.Option(True, "--open/--no-open", help="Open in browser"),
+    interactive: bool = typer.Option(False, "--interactive", "-i", help="Interactive TUI mode"),
 ) -> None:
     """Generate and optionally open HTML review."""
     path = config_path or get_default_config_path()
@@ -337,6 +455,11 @@ def review(
 
     if not clusters:
         console.print("[yellow]No clusters found. Run 'cluster' first.[/yellow]")
+        return
+
+    # Interactive mode
+    if interactive:
+        _interactive_review(store)
         return
 
     # Build cluster_docs map

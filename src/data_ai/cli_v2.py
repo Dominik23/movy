@@ -1,4 +1,5 @@
 # src/data_ai/cli_v2.py
+import time
 import webbrowser
 from pathlib import Path
 from typing import Optional
@@ -195,6 +196,9 @@ def scan(
 
             store.upsert_document(doc)
             progress.advance(task)
+
+            # Small delay to avoid overwhelming Ollama
+            time.sleep(0.2)
 
     # Show final count
     docs = store.get_documents_by_status(DocumentStatus.EMBEDDED)

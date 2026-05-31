@@ -614,7 +614,7 @@ def run(
 
     # Step 1: Scan
     console.print("[bold]Step 1: Scanning and extracting...[/bold]")
-    scan(folder=folder, config_path=config_path)
+    scan(folder=folder, config_path=config_path, trash_dir=None)
 
     # Step 2: Cluster
     console.print("\n[bold]Step 2: Clustering...[/bold]")

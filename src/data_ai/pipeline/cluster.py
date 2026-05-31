@@ -1,98 +1,69 @@
 # src/data_ai/pipeline/cluster.py
 import numpy as np
-from sklearn.cluster import KMeans
-from sklearn.metrics import silhouette_score
-
-from data_ai.utils.similarity import compute_variance, average_vectors
-
-
-def find_optimal_k(
-    vectors: list[list[float]],
-    min_k: int = 2,
-    max_k: int = 20,
-) -> int:
-    """
-    Find optimal number of clusters using Elbow method + Silhouette score.
-    """
-    n_samples = len(vectors)
-    if n_samples < min_k:
-        return min_k
-
-    max_k = min(max_k, n_samples // 2, n_samples - 1)
-    if max_k < min_k:
-        return min_k
-
-    X = np.array(vectors)
-
-    best_k = min_k
-    best_score = -1
-
-    for k in range(min_k, max_k + 1):
-        kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-        labels = kmeans.fit_predict(X)
-
-        if len(set(labels)) < 2:
-            continue
-
-        score = silhouette_score(X, labels)
-
-        if score > best_score:
-            best_score = score
-            best_k = k
-
-    return best_k
+import umap
+import hdbscan
 
 
 def cluster_documents(
     vectors: list[list[float]],
-    k: int,
-) -> tuple[list[int], list[list[float]]]:
+    min_cluster_size: int = 15,
+    umap_n_components: int = 10,
+) -> tuple[list[int], list[list[float]], list[int]]:
     """
-    Cluster vectors using KMeans.
+    Cluster vectors using UMAP + HDBSCAN.
 
-    Returns: (cluster_assignments, centroids)
+    Args:
+        vectors: List of embedding vectors (768-dimensional)
+        min_cluster_size: Minimum cluster size for HDBSCAN
+        umap_n_components: Target dimensions for UMAP reduction
+
+    Returns:
+        labels: Cluster assignment per document (-1 = outlier)
+        centroids: Centroid of each cluster (in original 768-dim space)
+        outlier_indices: Indices of outlier documents
     """
     X = np.array(vectors)
+    n_samples = len(vectors)
 
-    kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-    labels = kmeans.fit_predict(X)
+    # Handle edge cases
+    if n_samples < min_cluster_size:
+        # Too few samples - everything is an outlier
+        return [-1] * n_samples, [], list(range(n_samples))
 
-    centroids = kmeans.cluster_centers_.tolist()
+    # Adjust UMAP components if necessary
+    # UMAP needs n_components < n_samples, and we need room for spectral embedding
+    effective_components = min(umap_n_components, n_samples - 2, X.shape[1])
+    effective_components = max(2, effective_components)  # At least 2 dimensions
 
-    return labels.tolist(), centroids
+    # Effective neighbors must be less than n_samples
+    effective_neighbors = min(15, n_samples - 1)
 
+    # Dimensionality reduction with UMAP
+    reducer = umap.UMAP(
+        n_components=effective_components,
+        metric="cosine",
+        random_state=42,
+        n_neighbors=effective_neighbors,
+        init="random",  # Use random init for small datasets to avoid spectral issues
+    )
+    reduced = reducer.fit_transform(X)
 
-def should_split(
-    vectors: list[list[float]],
-    threshold: float = 0.4,
-) -> bool:
-    """
-    Check if a cluster should be split based on variance.
-    """
-    if len(vectors) < 3:  # Need at least 3 to split into 2+1
-        return False
+    # Clustering with HDBSCAN
+    clusterer = hdbscan.HDBSCAN(
+        min_cluster_size=min_cluster_size,
+        metric="euclidean",
+    )
+    labels = clusterer.fit_predict(reduced)
 
-    # Use mean distance from centroid as a measure of spread
-    # (variance of distances can be 0 even for very different vectors)
-    from data_ai.utils.similarity import cosine_distance
-    centroid = average_vectors(vectors)
-    distances = [cosine_distance(v, centroid) for v in vectors]
-    mean_distance = np.mean(distances)
+    # Extract outlier indices
+    outlier_indices = [i for i, label in enumerate(labels) if label == -1]
 
-    return float(mean_distance) > threshold
+    # Compute centroids in original space
+    unique_labels = sorted(set(labels) - {-1})
+    centroids = []
+    for label in unique_labels:
+        mask = labels == label
+        centroid = X[mask].mean(axis=0).tolist()
+        centroids.append(centroid)
 
-
-def split_cluster(
-    vectors: list[list[float]],
-    doc_ids: list[str],
-) -> tuple[list[tuple[str, int]], list[list[float]]]:
-    """
-    Split a cluster into 2 sub-clusters.
-
-    Returns: ([(doc_id, sub_cluster_idx), ...], [centroid1, centroid2])
-    """
-    assignments, centroids = cluster_documents(vectors, k=2)
-
-    result = [(doc_id, assignment) for doc_id, assignment in zip(doc_ids, assignments)]
-
-    return result, centroids
+    return labels.tolist(), centroids, outlier_indices

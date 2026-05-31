@@ -2,56 +2,69 @@ import pytest
 import numpy as np
 
 
-def test_find_optimal_k_returns_reasonable_k():
-    from data_ai.pipeline.cluster import find_optimal_k
-
-    # Create 3 distinct clusters
-    np.random.seed(42)
-    cluster1 = np.random.randn(20, 10) + [5, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-    cluster2 = np.random.randn(20, 10) + [0, 5, 0, 0, 0, 0, 0, 0, 0, 0]
-    cluster3 = np.random.randn(20, 10) + [0, 0, 5, 0, 0, 0, 0, 0, 0, 0]
-
-    vectors = np.vstack([cluster1, cluster2, cluster3]).tolist()
-
-    k = find_optimal_k(vectors, min_k=2, max_k=10)
-
-    assert 2 <= k <= 5  # Should find approximately 3
-
-
-def test_cluster_documents_returns_assignments():
+def test_cluster_documents_returns_labels_and_outliers():
     from data_ai.pipeline.cluster import cluster_documents
 
     np.random.seed(42)
-    vectors = np.random.randn(30, 10).tolist()
+    vectors = np.random.randn(50, 768).tolist()
 
-    assignments, centroids = cluster_documents(vectors, k=3)
+    labels, centroids, outlier_indices = cluster_documents(
+        vectors,
+        min_cluster_size=5,
+    )
 
-    assert len(assignments) == 30
-    assert len(centroids) == 3
-    assert all(0 <= a < 3 for a in assignments)
-
-
-def test_should_split_returns_true_for_high_variance():
-    from data_ai.pipeline.cluster import should_split
-
-    # Very different vectors
-    vectors = [
-        [1.0] + [0.0] * 9,
-        [0.0, 1.0] + [0.0] * 8,
-        [0.0, 0.0, 1.0] + [0.0] * 7,
-    ]
-
-    assert should_split(vectors, threshold=0.1) is True
+    assert len(labels) == 50
+    assert all(isinstance(label, int) for label in labels)
+    assert isinstance(outlier_indices, list)
+    assert all(isinstance(idx, int) for idx in outlier_indices)
+    # Outliers should have label -1
+    for idx in outlier_indices:
+        assert labels[idx] == -1
 
 
-def test_should_split_returns_false_for_low_variance():
-    from data_ai.pipeline.cluster import should_split
+def test_cluster_documents_finds_distinct_groups():
+    from data_ai.pipeline.cluster import cluster_documents
 
-    # Very similar vectors
-    vectors = [
-        [1.0, 0.1, 0.0],
-        [1.0, 0.0, 0.1],
-        [1.0, 0.05, 0.05],
-    ]
+    np.random.seed(42)
+    # Two clearly separated groups
+    group1 = np.random.randn(30, 768) + np.array([10.0] * 768)
+    group2 = np.random.randn(30, 768) + np.array([-10.0] * 768)
+    vectors = np.vstack([group1, group2]).tolist()
 
-    assert should_split(vectors, threshold=0.5) is False
+    labels, centroids, outlier_indices = cluster_documents(
+        vectors,
+        min_cluster_size=10,
+    )
+
+    # Should find at least 2 clusters
+    unique_clusters = set(labels) - {-1}
+    assert len(unique_clusters) >= 2
+    assert len(centroids) >= 2
+
+
+def test_cluster_documents_centroids_in_original_space():
+    from data_ai.pipeline.cluster import cluster_documents
+
+    np.random.seed(42)
+    vectors = np.random.randn(50, 768).tolist()
+
+    labels, centroids, _ = cluster_documents(vectors, min_cluster_size=5)
+
+    # Centroids should be 768-dimensional (original space)
+    for centroid in centroids:
+        assert len(centroid) == 768
+
+
+def test_cluster_documents_handles_small_dataset():
+    from data_ai.pipeline.cluster import cluster_documents
+
+    np.random.seed(42)
+    # Very small dataset - should still work
+    vectors = np.random.randn(10, 768).tolist()
+
+    labels, centroids, outlier_indices = cluster_documents(
+        vectors,
+        min_cluster_size=3,
+    )
+
+    assert len(labels) == 10

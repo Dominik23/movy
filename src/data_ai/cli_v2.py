@@ -527,16 +527,21 @@ def apply(
 
     clusters = store.get_all_clusters()
     approved_clusters = [c for c in clusters if c.status == ClusterStatus.APPROVED]
+    outlier_clusters = [c for c in clusters if c.status == ClusterStatus.OUTLIER]
 
     if not approved_clusters:
         # If no approved clusters, use all proposed ones
         approved_clusters = [c for c in clusters if c.status == ClusterStatus.PROPOSED]
-        if not approved_clusters:
+        if not approved_clusters and not outlier_clusters:
             console.print("[yellow]No clusters found. Run 'cluster' first.[/yellow]")
             return
-        console.print("[yellow]No approved clusters. Using proposed clusters.[/yellow]")
+        if approved_clusters:
+            console.print("[yellow]No approved clusters. Using proposed clusters.[/yellow]")
 
-    console.print(f"[blue]Applying {len(approved_clusters)} clusters to {target}...[/blue]")
+    # Add outlier clusters to the list to process
+    all_clusters_to_apply = approved_clusters + outlier_clusters
+
+    console.print(f"[blue]Applying {len(all_clusters_to_apply)} clusters to {target}...[/blue]")
 
     log_path = log_file or (Path(cfg.settings.log_file) if hasattr(cfg.settings, 'log_file') else None)
 
@@ -548,13 +553,19 @@ def apply(
         TextColumn("[progress.description]{task.description}"),
         console=console,
     ) as progress:
-        task = progress.add_task("Copying files...", total=len(approved_clusters))
+        task = progress.add_task("Copying files...", total=len(all_clusters_to_apply))
 
-        for cluster in approved_clusters:
+        for cluster in all_clusters_to_apply:
             progress.update(task, description=f"Processing {cluster.name}...")
 
             docs = store.get_documents_by_cluster(cluster.id)
-            folder_name = sanitize_folder_name(cluster.name)
+
+            # Special folder for outliers
+            if cluster.status == ClusterStatus.OUTLIER:
+                folder_name = "_nicht_zuordenbar"
+            else:
+                folder_name = sanitize_folder_name(cluster.name)
+
             target_dir = target / folder_name
 
             for doc in docs:

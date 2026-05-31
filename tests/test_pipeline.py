@@ -31,10 +31,12 @@ def test_embed_stage_calls_ollama():
     with patch("data_ai.pipeline.embed.get_embedding") as mock_embed:
         mock_embed.return_value = [0.1, 0.2, 0.3]
 
-        result = embed_stage("test text", model="nomic-embed-text")
+        # Text must be > 100 chars to pass embed_stage's minimum length check
+        long_text = "This is a test document that needs to be longer than one hundred characters to pass the embedding stage validation check."
+        result = embed_stage(long_text, model="nomic-embed-text")
 
         assert result == [0.1, 0.2, 0.3]
-        mock_embed.assert_called_once_with("test text", model="nomic-embed-text")
+        mock_embed.assert_called_once_with(long_text, model="nomic-embed-text")
 
 
 def test_match_stage_finds_best_category():

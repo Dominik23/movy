@@ -618,17 +618,17 @@ def run(
 
     # Step 2: Cluster
     console.print("\n[bold]Step 2: Clustering...[/bold]")
-    cluster(config_path=config_path)
+    cluster(config_path=config_path, min_cluster_size=None, recluster=True)
 
     # Step 3: Review
     if not skip_review:
         console.print("\n[bold]Step 3: Generating review...[/bold]")
-        review(config_path=config_path, open_browser=not auto_apply)
+        review(config_path=config_path, output=None, open_browser=not auto_apply, interactive=False)
 
     # Step 4: Apply
     if auto_apply:
         console.print("\n[bold]Step 4: Applying...[/bold]")
-        apply(target=target, config_path=config_path)
+        apply(target=target, config_path=config_path, log_file=None, dry_run=False)
     else:
         console.print("\n[yellow]Review the clusters in the browser, then run:[/yellow]")
         console.print(f"  data-ai apply {target}")

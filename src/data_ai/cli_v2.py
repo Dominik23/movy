@@ -16,7 +16,7 @@ from data_ai.config import load_config, get_default_config_path, create_default_
 from data_ai.storage import QdrantStore, Document, Cluster, DocumentStatus, ClusterStatus
 from data_ai.pipeline.extract import scan_folder, extract_stage
 from data_ai.pipeline.embed import embed_stage
-from data_ai.pipeline.cluster import find_optimal_k, cluster_documents, should_split, split_cluster
+from data_ai.pipeline.cluster import cluster_documents
 from data_ai.pipeline.naming import generate_cluster_name
 from data_ai.pipeline.review import generate_review_html
 from data_ai.pipeline.execute import execute_copy, sanitize_folder_name
@@ -208,8 +208,7 @@ def scan(
 @app.command()
 def cluster(
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
-    min_k: Optional[int] = typer.Option(None, "--min-k", help="Minimum number of clusters"),
-    max_k: Optional[int] = typer.Option(None, "--max-k", help="Maximum number of clusters"),
+    min_cluster_size: Optional[int] = typer.Option(None, "--min-cluster-size", help="Minimum cluster size"),
     recluster: bool = typer.Option(False, "--recluster", help="Delete existing clusters and recluster"),
 ) -> None:
     """Run clustering on embedded documents and generate names."""
@@ -244,83 +243,108 @@ def cluster(
         console.print("[yellow]Need at least 2 documents for clustering[/yellow]")
         return
 
-    # Find optimal k
-    min_clusters = min_k or cfg.settings.min_clusters
-    max_clusters = max_k or cfg.settings.max_clusters
+    # Get clustering parameters
+    effective_min_cluster_size = min_cluster_size or cfg.settings.min_cluster_size
+    umap_components = cfg.settings.umap_components
 
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         console=console,
     ) as progress:
-        task = progress.add_task("Finding optimal cluster count...", total=None)
-
-        k = find_optimal_k(vectors, min_k=min_clusters, max_k=max_clusters)
-        progress.update(task, description=f"Clustering into {k} clusters...")
+        task = progress.add_task("Running UMAP + HDBSCAN clustering...", total=None)
 
         # Run clustering
-        assignments, centroids = cluster_documents(vectors, k)
+        labels, centroids, outlier_indices = cluster_documents(
+            vectors,
+            min_cluster_size=effective_min_cluster_size,
+            umap_n_components=umap_components,
+        )
 
         progress.update(task, description="Creating cluster records...")
 
-        # Create clusters and assign documents
-        cluster_map: dict[int, str] = {}  # cluster_idx -> cluster_id
-        cluster_docs: dict[str, list[Document]] = {}  # cluster_id -> docs
+        # Group documents by cluster
+        cluster_docs: dict[int, list[tuple[str, Document]]] = {}
+        outlier_docs: list[tuple[str, Document]] = []
 
-        for cluster_idx in range(k):
-            cluster_id = store.generate_id()
-            cluster_map[cluster_idx] = cluster_id
-            cluster_docs[cluster_id] = []
-
-        # Assign documents to clusters
-        for doc_id, cluster_idx in zip(doc_ids, assignments):
-            cluster_id = cluster_map[cluster_idx]
-            store.update_document_cluster(doc_id, cluster_id)
-
-            # Find the document
-            for doc in docs:
-                if doc.id == doc_id:
-                    cluster_docs[cluster_id].append(doc)
-                    break
+        for idx, (doc_id, label) in enumerate(zip(doc_ids, labels)):
+            doc = next(d for d in docs if d.id == doc_id)
+            if label == -1:
+                outlier_docs.append((doc_id, doc))
+            else:
+                if label not in cluster_docs:
+                    cluster_docs[label] = []
+                cluster_docs[label].append((doc_id, doc))
 
         progress.update(task, description="Generating cluster names...")
 
-        # Create cluster records with names
-        for cluster_idx, cluster_id in cluster_map.items():
-            docs_in_cluster = cluster_docs[cluster_id]
-            summaries = [doc.summary for doc in docs_in_cluster]
-            vectors_in_cluster = [doc.vector for doc in docs_in_cluster if doc.vector]
+        # Create regular clusters
+        for cluster_idx, doc_list in cluster_docs.items():
+            cluster_id = store.generate_id()
 
-            # Generate name
+            # Assign documents to cluster
+            for doc_id, _ in doc_list:
+                store.update_document_cluster(doc_id, cluster_id)
+
+            # Generate name from summaries
+            summaries = [doc.summary for _, doc in doc_list]
             name = generate_cluster_name(summaries, model=cfg.settings.chat_model)
 
+            # Get centroid
+            centroid = centroids[cluster_idx] if cluster_idx < len(centroids) else []
+
             # Calculate variance
+            vectors_in_cluster = [doc.vector for _, doc in doc_list if doc.vector]
             variance = compute_variance(vectors_in_cluster) if vectors_in_cluster else 0.0
 
             cluster_record = Cluster(
                 id=cluster_id,
                 name=name,
-                doc_count=len(docs_in_cluster),
+                doc_count=len(doc_list),
                 variance=variance,
-                centroid=centroids[cluster_idx],
+                centroid=centroid,
                 status=ClusterStatus.PROPOSED,
             )
 
             store.upsert_cluster(cluster_record)
 
+        # Create outlier cluster if there are outliers
+        if outlier_docs:
+            outlier_cluster_id = store.generate_id()
+
+            for doc_id, _ in outlier_docs:
+                store.update_document_cluster(doc_id, outlier_cluster_id)
+
+            outlier_cluster = Cluster(
+                id=outlier_cluster_id,
+                name="Nicht zuordenbar",
+                doc_count=len(outlier_docs),
+                variance=0.0,
+                centroid=[],
+                status=ClusterStatus.OUTLIER,
+            )
+
+            store.upsert_cluster(outlier_cluster)
+
     # Show results
     clusters = store.get_all_clusters()
-    console.print(f"\n[green]Created {len(clusters)} clusters:[/green]\n")
+    regular_clusters = [c for c in clusters if c.status != ClusterStatus.OUTLIER]
+    outlier_cluster = next((c for c in clusters if c.status == ClusterStatus.OUTLIER), None)
+
+    console.print(f"\n[green]Created {len(regular_clusters)} clusters:[/green]\n")
 
     table = Table()
     table.add_column("Name")
     table.add_column("Documents", justify="right")
     table.add_column("Variance", justify="right")
 
-    for c in sorted(clusters, key=lambda x: x.doc_count, reverse=True):
+    for c in sorted(regular_clusters, key=lambda x: x.doc_count, reverse=True):
         table.add_row(c.name, str(c.doc_count), f"{c.variance:.2f}")
 
     console.print(table)
+
+    if outlier_cluster:
+        console.print(f"\n[yellow]Outliers: {outlier_cluster.doc_count} documents not assignable[/yellow]")
 
 
 def _interactive_review(store: "QdrantStore") -> None:

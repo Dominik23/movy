@@ -60,12 +60,14 @@ class QdrantStore:
         )
 
     def upsert_cluster(self, cluster: Cluster) -> None:
+        # Use zero vector for clusters without centroids (e.g., outlier clusters)
+        centroid = cluster.centroid if cluster.centroid else [0.0] * VECTOR_SIZE
         self.client.upsert(
             collection_name=self.clusters_collection,
             points=[
                 PointStruct(
                     id=cluster.id,
-                    vector=cluster.centroid,
+                    vector=centroid,
                     payload={
                         "name": cluster.name,
                         "doc_count": cluster.doc_count,

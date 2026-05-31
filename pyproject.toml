@@ -23,6 +23,7 @@ dependencies = [
     "pyvis>=0.3.0",
     "umap-learn>=0.5.0",
     "hdbscan>=0.8.33",
+    "pdf2image>=1.16.0",
 ]
 
 [project.optional-dependencies]

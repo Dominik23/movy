@@ -19,11 +19,10 @@ class Settings(BaseModel):
     qdrant_url: str = "localhost:6333"
     qdrant_collection_prefix: str = "data_ai"
 
-    # New: Clustering
-    min_clusters: int = Field(default=2, ge=2)
-    max_clusters: int = Field(default=20, ge=2)
+    # New: Clustering (UMAP + HDBSCAN)
+    min_cluster_size: int = Field(default=15, ge=2)
+    umap_components: int = Field(default=10, ge=2)
     variance_threshold: float = Field(default=0.4, ge=0.0, le=1.0)
-    min_cluster_size: int = Field(default=3, ge=1)
 
     # New: Processing
     batch_size: int = Field(default=100, ge=1)

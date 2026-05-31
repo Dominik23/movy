@@ -56,6 +56,14 @@ categories:
     cfg = load_config(config_file)
 
     assert cfg.settings.qdrant_url == "localhost:6333"
-    assert cfg.settings.min_clusters == 2
-    assert cfg.settings.max_clusters == 20
     assert cfg.settings.variance_threshold == 0.4
+
+
+def test_settings_has_umap_components():
+    from data_ai.config import Settings
+
+    settings = Settings()
+    assert settings.umap_components == 10
+    # Old settings should be removed
+    assert not hasattr(settings, "min_clusters") or settings.min_clusters is None
+    assert not hasattr(settings, "max_clusters") or settings.max_clusters is None

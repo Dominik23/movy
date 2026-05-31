@@ -76,3 +76,9 @@ def test_qdrant_store_upsert_document():
 
         mock_instance.upsert.assert_called_once()
 
+
+def test_cluster_status_has_outlier():
+    from data_ai.storage.models import ClusterStatus
+
+    assert hasattr(ClusterStatus, "OUTLIER")
+    assert ClusterStatus.OUTLIER.value == "outlier"

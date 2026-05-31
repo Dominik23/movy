@@ -17,6 +17,7 @@ class ClusterStatus(str, Enum):
     PROPOSED = "proposed"
     APPROVED = "approved"
     APPLIED = "applied"
+    OUTLIER = "outlier"
 
 
 class Document(BaseModel):

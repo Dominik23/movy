@@ -1,9 +1,14 @@
 import os
 from pathlib import Path
 
-import torch
+# Force CPU fallback for MPS issues on Apple Silicon
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+
+import numpy as np
 from bertopic import BERTopic
 from sentence_transformers import SentenceTransformer
+from umap import UMAP
+from hdbscan import HDBSCAN
 
 
 EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
@@ -16,8 +21,7 @@ def _get_embedding_model() -> SentenceTransformer:
     global _embedding_model
     if _embedding_model is None:
         # Force CPU to avoid MPS float64 issues on Apple Silicon
-        device = "cpu"
-        _embedding_model = SentenceTransformer(EMBEDDING_MODEL, device=device)
+        _embedding_model = SentenceTransformer(EMBEDDING_MODEL, device="cpu")
     return _embedding_model
 
 
@@ -51,13 +55,35 @@ def cluster_documents(
     embedding_model = _get_embedding_model()
 
     try:
+        # Pre-compute embeddings as float32 numpy array to avoid MPS issues
+        embeddings = embedding_model.encode(texts, convert_to_numpy=True)
+        embeddings = embeddings.astype(np.float32)
+
+        # Configure UMAP with explicit settings
+        umap_model = UMAP(
+            n_neighbors=15,
+            n_components=5,
+            min_dist=0.0,
+            metric="cosine",
+            random_state=42,
+        )
+
+        # Configure HDBSCAN
+        hdbscan_model = HDBSCAN(
+            min_cluster_size=min_topic_size,
+            metric="euclidean",
+            prediction_data=True,
+        )
+
         topic_model = BERTopic(
             embedding_model=embedding_model,
-            min_topic_size=min_topic_size,
+            umap_model=umap_model,
+            hdbscan_model=hdbscan_model,
             verbose=False,
         )
 
-        topics, _ = topic_model.fit_transform(texts)
+        # Fit with pre-computed float32 embeddings
+        topics, _ = topic_model.fit_transform(texts, embeddings=embeddings)
 
         # Group paths by topic
         result: dict[int, list[Path]] = {}
@@ -67,8 +93,9 @@ def cluster_documents(
             result[topic_id].append(path)
 
         return result, topic_model
-    except Exception:
+    except Exception as e:
         # Clustering failed - return all as outliers
+        print(f"Clustering error: {e}")
         return {-1: paths}, None
 
 

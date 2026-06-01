@@ -5,6 +5,11 @@ data-ai CLI v2
 The `run` command uses the new v2 pipeline (Docling + BERTopic).
 Legacy commands (init, status, scan, cluster, review, apply) use the old pipeline and require Qdrant.
 """
+# MUST be at the very top before any other imports to disable MPS on Apple Silicon
+import os
+os.environ["PYTORCH_MPS_DISABLE"] = "1"
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+
 import time
 import webbrowser
 from pathlib import Path

@@ -2,7 +2,8 @@ import os
 from pathlib import Path
 from typing import Optional
 
-# Force CPU for PyTorch to avoid MPS float64 issues on Apple Silicon
+# MUST be set before ANY torch import to disable MPS completely
+os.environ["PYTORCH_MPS_DISABLE"] = "1"
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
@@ -19,20 +20,15 @@ _converter: Optional["DocumentConverter"] = None
 
 def _get_converter():
     """Lazy-load the DocumentConverter (heavy initialization)."""
-    import torch
-    # Force CPU before importing docling
-    torch.set_default_device("cpu")
-
     from docling.document_converter import DocumentConverter
-    from docling.datamodel.pipeline_options import PdfPipelineOptions
+    from docling.datamodel.pipeline_options import PdfPipelineOptions, AcceleratorOptions
     from docling.datamodel.base_models import InputFormat
-    from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline
 
     global _converter
     if _converter is None:
-        # Configure pipeline to use CPU
-        pipeline_options = PdfPipelineOptions()
-        pipeline_options.accelerator_options.device = "cpu"
+        # Force CPU accelerator
+        accel_options = AcceleratorOptions(device="cpu")
+        pipeline_options = PdfPipelineOptions(accelerator_options=accel_options)
 
         _converter = DocumentConverter(
             format_options={
@@ -62,5 +58,5 @@ def extract_text(file_path: Path) -> str | None:
         text = result.document.export_to_markdown()
         return text.strip() if text and text.strip() else None
     except Exception as e:
-        print(f"Extraction error for {file_path}: {e}")
+        # Silently fail - file will be skipped
         return None

@@ -1,4 +1,8 @@
-# src/data_ai/pipeline/cluster.py
+"""
+DEPRECATED: Use cluster_v2.py with BERTopic instead.
+This module will be removed in v0.3.0.
+"""
+
 import numpy as np
 import umap
 import hdbscan

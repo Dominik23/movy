@@ -1,4 +1,8 @@
-# src/data_ai/pipeline/extract.py
+"""
+DEPRECATED: Use extract_v2.py with Docling instead.
+This module will be removed in v0.3.0.
+"""
+
 import shutil
 from datetime import datetime
 from pathlib import Path

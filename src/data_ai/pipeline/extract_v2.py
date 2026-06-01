@@ -6,6 +6,14 @@ from typing import Optional
 os.environ["PYTORCH_MPS_DISABLE"] = "1"
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
+os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"
+
+# Force torch to CPU before any other import can grab MPS
+import torch
+torch.set_default_device("cpu")
+if hasattr(torch.backends, "mps"):
+    # Ensure MPS is not used even if available
+    pass  # torch.backends.mps.is_available() will return False due to env vars
 
 
 SUPPORTED_EXTENSIONS = {

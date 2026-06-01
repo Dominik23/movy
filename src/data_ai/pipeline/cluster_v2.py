@@ -1,8 +1,14 @@
 import os
 from pathlib import Path
 
-# Force CPU fallback for MPS issues on Apple Silicon
+# Force CPU - must be before any torch import
+os.environ["PYTORCH_MPS_DISABLE"] = "1"
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"
+
+import torch
+torch.set_default_device("cpu")
 
 import numpy as np
 from bertopic import BERTopic

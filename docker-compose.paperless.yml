@@ -1,0 +1,55 @@
+version: "3.8"
+
+services:
+  broker:
+    image: redis:7
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: paperless
+      POSTGRES_USER: paperless
+      POSTGRES_PASSWORD: paperless
+
+  webserver:
+    image: ghcr.io/paperless-ngx/paperless-ngx:latest
+    restart: unless-stopped
+    depends_on:
+      - db
+      - broker
+    ports:
+      - "8000:8000"
+    volumes:
+      # Input folder - deine Dokumente
+      - /Users/dominikhartl/Downloads/landerer:/usr/src/paperless/consume
+      # Output folder - sortierte Dokumente
+      - /Users/dominikhartl/Downloads/landerer-output:/usr/src/paperless/media/documents/archive
+      # Paperless data (thumbnails, originals, etc.)
+      - paperless-data:/usr/src/paperless/data
+      - paperless-media:/usr/src/paperless/media
+    environment:
+      PAPERLESS_REDIS: redis://broker:6379
+      PAPERLESS_DBHOST: db
+      PAPERLESS_DBNAME: paperless
+      PAPERLESS_DBUSER: paperless
+      PAPERLESS_DBPASS: paperless
+      PAPERLESS_OCR_LANGUAGE: deu+eng
+      PAPERLESS_TIME_ZONE: Europe/Berlin
+      # Auto-create user on first start
+      PAPERLESS_ADMIN_USER: admin
+      PAPERLESS_ADMIN_PASSWORD: admin
+      # Filename format for archived documents
+      # Uses: Year/DocumentType/Title
+      PAPERLESS_FILENAME_FORMAT: "{created_year}/{document_type}/{title}"
+
+volumes:
+  redisdata:
+  pgdata:
+  paperless-data:
+  paperless-media:

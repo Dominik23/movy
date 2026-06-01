@@ -34,9 +34,13 @@ def _get_converter():
 
     global _converter
     if _converter is None:
-        # Force CPU accelerator
+        # Force CPU accelerator and disable layout model that causes MPS float64 errors
         accel_options = AcceleratorOptions(device="cpu")
-        pipeline_options = PdfPipelineOptions(accelerator_options=accel_options)
+        pipeline_options = PdfPipelineOptions(
+            accelerator_options=accel_options,
+            do_table_structure=False,  # Disable table detection (uses problematic model)
+            do_ocr=False,  # Disable OCR to avoid additional model issues
+        )
 
         _converter = DocumentConverter(
             format_options={

@@ -51,6 +51,7 @@ def process_year_batch(
     """
     # Extract text from all files
     documents: list[tuple[Path, str]] = []
+    failed_files: list[Path] = []  # Track files that failed extraction
 
     for i, file_path in enumerate(files):
         if progress and task_id is not None:
@@ -59,15 +60,25 @@ def process_year_batch(
         text = extract_text(file_path)
         if text:
             documents.append((file_path, text))
+        else:
+            # File failed extraction - track it so we don't lose it!
+            failed_files.append(file_path)
 
     if not documents:
-        return {"_Sonstiges": files}
+        # All files failed extraction - put them all in _Fehler
+        result = {"_Sonstiges": []}
+        if failed_files:
+            result["_Fehler"] = failed_files
+        return result
 
     # Cluster documents
     clusters, topic_model = cluster_documents(documents, min_topic_size=min_topic_size)
 
     if not clusters:
-        return {"_Sonstiges": files}
+        result = {"_Sonstiges": [p for p, _ in documents]}
+        if failed_files:
+            result["_Fehler"] = failed_files
+        return result
 
     # Generate names for each cluster
     result: dict[str, list[Path]] = {}
@@ -86,6 +97,10 @@ def process_year_batch(
             counter += 1
 
         result[name] = topic_files
+
+    # Add failed files to _Fehler cluster so they don't get lost!
+    if failed_files:
+        result["_Fehler"] = failed_files
 
     return result
 
@@ -191,6 +206,10 @@ def run_pipeline(
             )
 
         all_clusters[year] = clusters
+
+        # Show warning for failed files
+        if "_Fehler" in clusters:
+            console.print(f"  [yellow]⚠ {len(clusters['_Fehler'])} files failed extraction (will be in _Fehler/)[/yellow]")
 
         console.print(f"  Found [green]{len(clusters)}[/green] topics:")
         for name, topic_files in sorted(clusters.items(), key=lambda x: -len(x[1])):

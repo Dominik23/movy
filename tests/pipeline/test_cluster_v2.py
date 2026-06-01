@@ -18,7 +18,8 @@ def test_cluster_documents_returns_dict():
 
     with patch("data_ai.pipeline.cluster_v2.BERTopic", return_value=mock_model):
         with patch("data_ai.pipeline.cluster_v2.SentenceTransformer"):
-            result, model = cluster_documents(docs)
+            # Use min_topic_size=2 so 4 docs can form clusters
+            result, model = cluster_documents(docs, min_topic_size=2)
 
     assert isinstance(result, dict)
     assert 0 in result

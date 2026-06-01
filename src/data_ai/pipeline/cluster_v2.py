@@ -1,5 +1,7 @@
+import os
 from pathlib import Path
 
+import torch
 from bertopic import BERTopic
 from sentence_transformers import SentenceTransformer
 
@@ -13,7 +15,9 @@ def _get_embedding_model() -> SentenceTransformer:
     """Lazy-load the embedding model."""
     global _embedding_model
     if _embedding_model is None:
-        _embedding_model = SentenceTransformer(EMBEDDING_MODEL)
+        # Force CPU to avoid MPS float64 issues on Apple Silicon
+        device = "cpu"
+        _embedding_model = SentenceTransformer(EMBEDDING_MODEL, device=device)
     return _embedding_model
 
 

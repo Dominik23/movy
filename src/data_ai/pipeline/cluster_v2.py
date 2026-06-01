@@ -39,24 +39,33 @@ def cluster_documents(
     paths = [doc[0] for doc in documents]
     texts = [doc[1] for doc in documents]
 
+    # Need at least min_topic_size documents to cluster
+    if len(documents) < min_topic_size:
+        # Too few documents - return all as outliers
+        return {-1: paths}, None
+
     embedding_model = _get_embedding_model()
 
-    topic_model = BERTopic(
-        embedding_model=embedding_model,
-        min_topic_size=min_topic_size,
-        verbose=False,
-    )
+    try:
+        topic_model = BERTopic(
+            embedding_model=embedding_model,
+            min_topic_size=min_topic_size,
+            verbose=False,
+        )
 
-    topics, _ = topic_model.fit_transform(texts)
+        topics, _ = topic_model.fit_transform(texts)
 
-    # Group paths by topic
-    result: dict[int, list[Path]] = {}
-    for path, topic_id in zip(paths, topics):
-        if topic_id not in result:
-            result[topic_id] = []
-        result[topic_id].append(path)
+        # Group paths by topic
+        result: dict[int, list[Path]] = {}
+        for path, topic_id in zip(paths, topics):
+            if topic_id not in result:
+                result[topic_id] = []
+            result[topic_id].append(path)
 
-    return result, topic_model
+        return result, topic_model
+    except Exception:
+        # Clustering failed - return all as outliers
+        return {-1: paths}, None
 
 
 def get_topic_keywords(

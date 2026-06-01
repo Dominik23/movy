@@ -1,8 +1,14 @@
 # src/data_ai/cli_v2.py
+"""
+data-ai CLI v2
+
+The `run` command uses the new v2 pipeline (Docling + BERTopic).
+Legacy commands (init, status, scan, cluster, review, apply) use the old pipeline and require Qdrant.
+"""
 import time
 import webbrowser
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from uuid import uuid4
 
 import typer
@@ -12,16 +18,40 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.prompt import Prompt, Confirm
 from rich.table import Table
 
-from data_ai.config import load_config, get_default_config_path, create_default_config
-from data_ai.storage import QdrantStore, Document, Cluster, DocumentStatus, ClusterStatus
-from data_ai.pipeline.extract import scan_folder, extract_stage
-from data_ai.pipeline.embed import embed_stage
-from data_ai.pipeline.cluster import cluster_documents
-from data_ai.pipeline.naming import generate_cluster_name
-from data_ai.pipeline.review import generate_review_html
-from data_ai.pipeline.execute import execute_copy, sanitize_folder_name
+# New v2 pipeline import (no heavy dependencies)
 from data_ai.pipeline.run import run_pipeline
-from data_ai.utils.similarity import compute_variance
+
+# Lazy imports for legacy commands that need Qdrant
+if TYPE_CHECKING:
+    from data_ai.config import load_config, get_default_config_path, create_default_config
+    from data_ai.storage import QdrantStore, Document, Cluster, DocumentStatus, ClusterStatus
+    from data_ai.pipeline.extract import scan_folder, extract_stage
+    from data_ai.pipeline.embed import embed_stage
+    from data_ai.pipeline.cluster import cluster_documents
+    from data_ai.pipeline.naming import generate_cluster_name
+    from data_ai.pipeline.review import generate_review_html
+    from data_ai.pipeline.execute import execute_copy, sanitize_folder_name
+    from data_ai.utils.similarity import compute_variance
+
+
+def _import_legacy():
+    """Lazy import legacy modules (requires Qdrant and old dependencies)."""
+    global load_config, get_default_config_path, create_default_config
+    global QdrantStore, Document, Cluster, DocumentStatus, ClusterStatus
+    global scan_folder, extract_stage, embed_stage, cluster_documents
+    global generate_cluster_name, generate_review_html, execute_copy, sanitize_folder_name
+    global compute_variance
+
+    from data_ai.config import load_config, get_default_config_path, create_default_config
+    from data_ai.storage import QdrantStore, Document, Cluster, DocumentStatus, ClusterStatus
+    from data_ai.pipeline.extract import scan_folder, extract_stage
+    from data_ai.pipeline.embed import embed_stage
+    from data_ai.pipeline.cluster import cluster_documents
+    from data_ai.pipeline.naming import generate_cluster_name as _gen_name
+    generate_cluster_name = _gen_name
+    from data_ai.pipeline.review import generate_review_html
+    from data_ai.pipeline.execute import execute_copy, sanitize_folder_name
+    from data_ai.utils.similarity import compute_variance
 
 app = typer.Typer(
     name="data-ai",
@@ -30,7 +60,10 @@ app = typer.Typer(
 console = Console()
 
 
-def get_store(config_path: Optional[Path] = None) -> QdrantStore:
+def get_store(config_path: Optional[Path] = None) -> "QdrantStore":
+    _import_legacy()
+    from data_ai.config import load_config, get_default_config_path
+    from data_ai.storage import QdrantStore
     path = config_path or get_default_config_path()
     if path.exists():
         cfg = load_config(path)
@@ -44,6 +77,9 @@ def init(
     db_url: str = typer.Option("localhost:6333", "--db-url"),
 ) -> None:
     """Initialize config and verify Qdrant connection."""
+    _import_legacy()
+    from data_ai.config import get_default_config_path, create_default_config
+    from data_ai.storage import QdrantStore
     path = config_path or get_default_config_path()
 
     if not path.exists():

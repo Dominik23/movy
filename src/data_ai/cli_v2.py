@@ -20,6 +20,7 @@ from data_ai.pipeline.cluster import cluster_documents
 from data_ai.pipeline.naming import generate_cluster_name
 from data_ai.pipeline.review import generate_review_html
 from data_ai.pipeline.execute import execute_copy, sanitize_folder_name
+from data_ai.pipeline.run import run_pipeline
 from data_ai.utils.similarity import compute_variance
 
 app = typer.Typer(
@@ -601,37 +602,31 @@ def apply(
 
 @app.command()
 def run(
-    folder: Path = typer.Argument(..., help="Folder to process"),
-    target: Path = typer.Argument(..., help="Target directory for organized files"),
-    config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
-    skip_review: bool = typer.Option(False, "--skip-review", help="Skip HTML review generation"),
-    auto_apply: bool = typer.Option(False, "--auto-apply", help="Apply without manual review"),
+    input_dir: Path = typer.Argument(..., help="Input directory to process"),
+    output: Path = typer.Option(None, "--output", "-o", help="Output directory"),
+    min_topic_size: int = typer.Option(10, "--min-topic-size", help="Minimum documents per cluster"),
+    model: str = typer.Option("llama3.2", "--model", "-m", help="Ollama model for naming"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without copying"),
 ) -> None:
-    """Full pipeline: scan, cluster, review, and apply."""
-    from typer import Context
+    """
+    Process documents: detect year, extract text, cluster, and organize.
 
-    console.print("[bold blue]Starting full pipeline...[/bold blue]\n")
+    Example:
+        data-ai run /input --output /output
+    """
+    if not input_dir.exists():
+        console.print(f"[red]Error:[/red] Input directory does not exist: {input_dir}")
+        raise typer.Exit(1)
 
-    # Step 1: Scan
-    console.print("[bold]Step 1: Scanning and extracting...[/bold]")
-    scan(folder=folder, config_path=config_path, trash_dir=None)
+    output_dir = output or (input_dir.parent / "output")
 
-    # Step 2: Cluster
-    console.print("\n[bold]Step 2: Clustering...[/bold]")
-    cluster(config_path=config_path, min_cluster_size=None, recluster=True)
-
-    # Step 3: Review
-    if not skip_review:
-        console.print("\n[bold]Step 3: Generating review...[/bold]")
-        review(config_path=config_path, output=None, open_browser=not auto_apply, interactive=False)
-
-    # Step 4: Apply
-    if auto_apply:
-        console.print("\n[bold]Step 4: Applying...[/bold]")
-        apply(target=target, config_path=config_path, log_file=None, dry_run=False)
-    else:
-        console.print("\n[yellow]Review the clusters in the browser, then run:[/yellow]")
-        console.print(f"  data-ai apply {target}")
+    run_pipeline(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        min_topic_size=min_topic_size,
+        model=model,
+        dry_run=dry_run,
+    )
 
 
 if __name__ == "__main__":

@@ -8,12 +8,17 @@ os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"
 
-# Force torch to CPU before any other import can grab MPS
+# Force torch to CPU and monkey-patch MPS availability
 import torch
+
+# Monkey-patch to completely disable MPS
+torch.backends.mps.is_available = lambda: False
+torch.backends.mps.is_built = lambda: False
+if hasattr(torch.cuda, 'is_available'):
+    torch.cuda.is_available = lambda: False
+
+# Force default device to CPU
 torch.set_default_device("cpu")
-if hasattr(torch.backends, "mps"):
-    # Ensure MPS is not used even if available
-    pass  # torch.backends.mps.is_available() will return False due to env vars
 
 
 SUPPORTED_EXTENSIONS = {
@@ -34,12 +39,12 @@ def _get_converter():
 
     global _converter
     if _converter is None:
-        # Force CPU accelerator and disable layout model that causes MPS float64 errors
+        # Force CPU accelerator with full features enabled
         accel_options = AcceleratorOptions(device="cpu")
         pipeline_options = PdfPipelineOptions(
             accelerator_options=accel_options,
-            do_table_structure=False,  # Disable table detection (uses problematic model)
-            do_ocr=False,  # Disable OCR to avoid additional model issues
+            do_table_structure=True,
+            do_ocr=True,
         )
 
         _converter = DocumentConverter(
